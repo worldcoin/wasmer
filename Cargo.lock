@@ -6146,7 +6146,7 @@ dependencies = [
 [[package]]
 name = "webc"
 version = "5.0.0-rc.5"
-source = "git+https://github.com/wasmerio/pirita?branch=compat#d2be9738ce81b66bc5f43dea6c2e725c97067a62"
+source = "git+https://github.com/wasmerio/pirita?branch=compat-patches#8be3e3bc18c9abf0062dd6543ac08f5211327ca3"
 dependencies = [
  "anyhow",
  "base64 0.21.0",
