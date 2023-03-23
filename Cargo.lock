@@ -4775,7 +4775,7 @@ dependencies = [
  "tokio",
  "tracing",
  "typetag",
- "webc 5.0.0-rc.5",
+ "webc 5.0.0-rc.6",
 ]
 
 [[package]]
@@ -5288,7 +5288,7 @@ dependencies = [
  "wasmer-middlewares",
  "wasmer-types",
  "wasmer-wasix",
- "webc 5.0.0-rc.5",
+ "webc 5.0.0-rc.6",
 ]
 
 [[package]]
@@ -5389,7 +5389,7 @@ dependencies = [
  "wasmer-wasix-experimental-io-devices",
  "wasmer-wast",
  "webc 4.1.1",
- "webc 5.0.0-rc.5",
+ "webc 5.0.0-rc.6",
 ]
 
 [[package]]
@@ -5668,9 +5668,13 @@ dependencies = [
  "toml",
  "url",
  "wasmer-toml",
+<<<<<<< HEAD
  "wasmer-wasm-interface",
  "wasmparser 0.51.4",
  "webc 5.0.0-rc.5",
+=======
+ "webc 5.0.0-rc.6",
+>>>>>>> d956b8866d (Bump to the latest webc version)
  "whoami",
 ]
 
@@ -5803,7 +5807,7 @@ dependencies = [
  "wasmer-wasix-types",
  "wcgi",
  "wcgi-host",
- "webc 5.0.0-rc.5",
+ "webc 5.0.0-rc.6",
  "weezl",
  "winapi",
 ]
@@ -6145,8 +6149,9 @@ dependencies = [
 
 [[package]]
 name = "webc"
-version = "5.0.0-rc.5"
-source = "git+https://github.com/wasmerio/pirita?branch=compat-patches#e9180ce2467c72139661443f384df105f01da278"
+version = "5.0.0-rc.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa158c77bd41040f4b9a4b91be63446885ce9b04bc9a5bb457fa586e7a8c9815"
 dependencies = [
  "anyhow",
  "base64 0.21.0",
