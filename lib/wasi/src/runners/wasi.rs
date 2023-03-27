@@ -4,11 +4,15 @@ use std::sync::Arc;
 
 use anyhow::{Context, Error};
 use serde::{Deserialize, Serialize};
+use virtual_fs::WebcVolumeFileSystem;
 use wasmer::{Module, Store};
-use webc::metadata::{annotations::Wasi, Command};
+use webc::{
+    metadata::{annotations::Wasi, Command},
+    Container,
+};
 
 use crate::{
-    runners::{wasi_common::CommonWasiOptions, MappedDirectory, WapmContainer},
+    runners::{wasi_common::CommonWasiOptions, MappedDirectory},
     PluggableRuntime, VirtualTaskManager, WasiEnvBuilder,
 };
 
@@ -118,13 +122,14 @@ impl WasiRunner {
 
     fn prepare_webc_env(
         &self,
-        container: &WapmContainer,
+        container: &Container,
         program_name: &str,
         wasi: &Wasi,
     ) -> Result<WasiEnvBuilder, anyhow::Error> {
         let mut builder = WasiEnvBuilder::new(program_name);
+        let container_fs = Arc::new(WebcVolumeFileSystem::mount_all(container));
         self.wasi
-            .prepare_webc_env(&mut builder, container.container_fs(), wasi)?;
+            .prepare_webc_env(&mut builder, container_fs, wasi)?;
 
         if let Some(tasks) = &self.tasks {
             let rt = PluggableRuntime::new(Arc::clone(tasks));
@@ -149,14 +154,15 @@ impl crate::runners::Runner for WasiRunner {
         &mut self,
         command_name: &str,
         command: &Command,
-        container: &WapmContainer,
+        container: &Container,
     ) -> Result<Self::Output, Error> {
         let wasi = command
             .annotation("wasi")?
             .unwrap_or_else(|| Wasi::new(command_name));
         let atom_name = &wasi.atom;
-        let atom = container
-            .get_atom(atom_name)
+        let atoms = container.atoms();
+        let atom = atoms
+            .get(atom_name)
             .with_context(|| format!("Unable to get the \"{atom_name}\" atom"))?;
 
         let mut module = Module::new(&self.store, atom)?;

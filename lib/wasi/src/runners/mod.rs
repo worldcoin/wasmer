@@ -1,4 +1,3 @@
-mod container;
 mod runner;
 
 #[cfg(feature = "webc_runner_rt_emscripten")]
@@ -10,10 +9,7 @@ mod wasi_common;
 #[cfg(feature = "webc_runner_rt_wcgi")]
 pub mod wcgi;
 
-pub use self::{
-    container::{Bindings, WapmContainer, WebcParseError, WitBindings},
-    runner::Runner,
-};
+pub use self::runner::Runner;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MappedDirectory {
