@@ -367,7 +367,6 @@ impl Wasi {
                         tracing::trace!(%pid, %tid, "entered a deep sleep");
 
                         // Create the respawn function
-                        let module = run.instance.module().clone();
                         let tasks = ctx.data(&store).tasks().clone();
                         let rewind = deep.rewind;
                         let respawn = {
@@ -378,20 +377,14 @@ impl Wasi {
                                 invoke: run.invoke,
                                 args: run.args,
                             };
-                            move |store, _module, _memory, res| {
+                            move |store, res| {
                                 Self::run_with_deep_sleep(run, store, tx, Some((rewind, res)));
                             }
                         };
 
                         // Spawns the WASM process after a trigger
                         tasks
-                            .resume_wasm_after_poller(
-                                Box::new(respawn),
-                                store,
-                                module,
-                                ctx,
-                                deep.work,
-                            )
+                            .resume_wasm_after_poller(Box::new(respawn), store, ctx, deep.work)
                             .unwrap();
                         return;
                     }

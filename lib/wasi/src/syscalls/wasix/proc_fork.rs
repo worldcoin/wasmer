@@ -208,7 +208,7 @@ pub fn proc_fork<M: MemorySize>(
                 }
 
                 // Invoke the start function
-                run::<M>(ctx, store, module, memory, tasks, child_handle, None);
+                run::<M>(ctx, store, tasks, child_handle, None);
             };
 
             tasks_outer
@@ -272,8 +272,6 @@ pub fn proc_fork<M: MemorySize>(
 fn run<M: MemorySize>(
     ctx: WasiFunctionEnv,
     mut store: Store,
-    module: Module,
-    _memory: Memory,
     tasks: Arc<dyn VirtualTaskManager>,
     child_handle: WasiThreadHandle,
     rewind_state: Option<(RewindState, Result<(), Errno>)>,
@@ -322,12 +320,10 @@ fn run<M: MemorySize>(
                     let ctx = ctx.clone();
                     let tasks = tasks.clone();
                     let rewind_state = deep.rewind;
-                    move |store, module, memory, trigger_res| {
+                    move |store, trigger_res| {
                         run::<M>(
                             ctx,
                             store,
-                            module,
-                            memory,
                             tasks,
                             child_handle,
                             Some((rewind_state, trigger_res)),
@@ -336,7 +332,7 @@ fn run<M: MemorySize>(
                 };
 
                 /// Spawns the WASM process after a trigger
-                tasks.resume_wasm_after_poller(Box::new(respawn), store, module, ctx, deep.work);
+                tasks.resume_wasm_after_poller(Box::new(respawn), store, ctx, deep.work);
                 return Errno::Success.into();
             }
             _ => {}

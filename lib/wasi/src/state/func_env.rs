@@ -1,5 +1,8 @@
 use tracing::trace;
-use wasmer::{AsStoreMut, AsStoreRef, ExportError, FunctionEnv, Imports, Instance, Memory, Module};
+use wasmer::{
+    AsStoreMut, AsStoreRef, ExportError, FunctionEnv, Imports, Instance, InstantiationError,
+    Memory, Module, Store,
+};
 use wasmer_wasix_types::wasi::ExitCode;
 
 use crate::{
@@ -118,6 +121,41 @@ impl WasiFunctionEnv {
         layout.stack_upper = stack_base;
         layout.stack_size = layout.stack_upper - layout.stack_lower;
 
+        Ok(())
+    }
+
+    /// Re-initializes this environment using a supplied module and memory
+    ///
+    /// This must be called after doing an initialize and is normally executed
+    /// when the memory and/or module is changed
+    pub fn reinitialize(
+        &mut self,
+        store: &mut Store,
+        module: &Module,
+        memory: Memory,
+    ) -> Result<(), InstantiationError> {
+        // Create a new store and copy the memory to it
+        let env = self.data(&store).duplicate();
+        let memory = {
+            let mut new_store = self.data(&store).runtime().new_store();
+            let memory = memory.clone_in_store(store, &mut new_store).unwrap();
+            std::mem::swap(&mut new_store, store);
+            memory
+        };
+
+        // Recreate a new store after extracting the environment
+        self.env = FunctionEnv::new(store, env);
+
+        // Build the context object and import the memory
+        let (mut import_object, init) =
+            crate::import_object_for_all_wasi_versions(module, store, &self.env);
+        import_object.define("env", "memory", memory.clone());
+
+        let instance = Instance::new(store, module, &import_object)?;
+        init(&instance, &store).unwrap();
+
+        // Set the current thread ID
+        self.data_mut(store).inner = Some(WasiInstanceHandles::new(memory, &store, instance));
         Ok(())
     }
 

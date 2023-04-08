@@ -156,8 +156,8 @@ impl VirtualTaskManager for TokioTaskManager {
         &self,
         task: Box<WasmResumeTask>,
         store: Store,
-        module: Module,
-        memory: Memory,
+        _module: Module,
+        _memory: Memory,
         trigger: Box<WasmResumeTrigger>,
     ) -> Result<(), WasiThreadError> {
         let trigger = trigger(store);
@@ -167,7 +167,7 @@ impl VirtualTaskManager for TokioTaskManager {
             if let TaskResumeAction::Run(store, res) = action {
                 handle.spawn_blocking(move || {
                     // Invoke the callback
-                    task(store, module, memory, res);
+                    task(store, res);
                 });
             }
         });

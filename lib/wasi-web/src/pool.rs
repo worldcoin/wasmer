@@ -672,14 +672,14 @@ pub fn wasm_entry_point(ctx_ptr: u32, wasm_module: JsValue, wasm_memory: JsValue
             task(wasm_store, wasm_module, wasm_memory);
         }
         WasmRun::Resume { task, result } => {
-            let wasm_memory = match wasm_memory {
+            let _wasm_memory = match wasm_memory {
                 Some(m) => m,
                 None => {
                     error!("no memory passed to resume_after_trigger");
                     return;
                 }
             };
-            task(wasm_store, wasm_module, wasm_memory, result);
+            task(wasm_store, result);
         }
     }
 }

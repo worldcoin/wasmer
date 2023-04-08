@@ -36,7 +36,7 @@ pub enum TaskResumeAction {
     Abort,
 }
 
-pub type WasmResumeTask = dyn FnOnce(Store, Module, Memory, Result<(), Errno>) + Send + 'static;
+pub type WasmResumeTask = dyn FnOnce(Store, Result<(), Errno>) + Send + 'static;
 
 pub type WasmResumeTrigger = dyn FnOnce(Store) -> Pin<Box<dyn Future<Output = TaskResumeAction> + Send + 'static>>
     + Send
@@ -127,11 +127,11 @@ impl dyn VirtualTaskManager {
         &self,
         task: Box<WasmResumeTask>,
         store: Store,
-        module: Module,
         env: WasiFunctionEnv,
         work: Box<dyn AsyncifyFuture + Send + Sync + 'static>,
     ) -> Result<(), WasiThreadError> {
-        // Extract the memory
+        // Extract the module and memory
+        let module = env.data(&store).inner().instance.module().clone();
         let memory = env.data(&store).memory_clone();
 
         // This poller will process any signals when the main working function is idle

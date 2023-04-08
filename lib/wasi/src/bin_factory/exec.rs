@@ -162,8 +162,7 @@ pub fn spawn_exec_module(
 
                 // Call the module
                 if let Some(start) = start {
-                    let memory = ctx.data(&store).memory_clone();
-                    call_module(ctx, store, module, memory, start, None);
+                    call_module(ctx, store, start, None);
                 } else {
                     debug!("wasi[{}]::exec-failed: missing _start function", pid);
                     ctx.data(&store)
@@ -187,8 +186,6 @@ pub fn spawn_exec_module(
 fn call_module(
     ctx: WasiFunctionEnv,
     mut store: Store,
-    module: Module,
-    _memory: Memory,
     start: Function,
     rewind_state: Option<(RewindState, Result<(), Errno>)>,
 ) {
@@ -255,27 +252,16 @@ fn call_module(
                     let rewind = deep.rewind;
                     let respawn = {
                         let ctx = ctx.clone();
-                        move |store, module, memory, trigger_res| {
+                        move |store, trigger_res| {
                             // Call the thread
-                            call_module(
-                                ctx,
-                                store,
-                                module,
-                                memory,
-                                start,
-                                Some((rewind, trigger_res)),
-                            );
+                            call_module(ctx, store, start, Some((rewind, trigger_res)));
                         }
                     };
 
                     // Spawns the WASM process after a trigger
-                    if let Err(err) = tasks.resume_wasm_after_poller(
-                        Box::new(respawn),
-                        store,
-                        module,
-                        ctx,
-                        deep.work,
-                    ) {
+                    if let Err(err) =
+                        tasks.resume_wasm_after_poller(Box::new(respawn), store, ctx, deep.work)
+                    {
                         debug!("failed to go into deep sleep - {}", err);
                     }
                     return;
