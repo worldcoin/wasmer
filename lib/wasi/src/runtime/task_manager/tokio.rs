@@ -76,7 +76,6 @@ impl<'g> Drop for TokioRuntimeGuard<'g> {
     fn drop(&mut self) {}
 }
 
-#[async_trait::async_trait]
 impl VirtualTaskManager for TokioTaskManager {
     fn build_memory(
         &self,
@@ -99,12 +98,14 @@ impl VirtualTaskManager for TokioTaskManager {
     }
 
     /// See [`VirtualTaskManager::sleep_now`].
-    async fn sleep_now(&self, time: Duration) {
-        if time == Duration::ZERO {
-            tokio::task::yield_now().await;
-        } else {
-            tokio::time::sleep(time).await;
-        }
+    fn sleep_now(&self, time: Duration) -> Pin<Box<dyn Future<Output = ()> + Send + Sync>> {
+        Box::pin(async move {
+            if time == Duration::ZERO {
+                tokio::task::yield_now().await;
+            } else {
+                tokio::time::sleep(time).await;
+            }
+        })
     }
 
     /// See [`VirtualTaskManager::task_shared`].

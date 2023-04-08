@@ -132,7 +132,10 @@ impl VirtualTaskManager for WebTaskManager {
     /// Invokes whenever a WASM thread goes idle. In some runtimes (like singlethreaded
     /// execution environments) they will need to do asynchronous work whenever the main
     /// thread goes idle and this is the place to hook for that.
-    async fn sleep_now(&self, time: Duration) {
+    fn sleep_now(
+        &self,
+        time: Duration,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>> {
         // The async code itself has to be sent to a main JS thread as this is where
         // time can be handled properly - later we can look at running a JS runtime
         // on the dedicated threads but that will require that processes can be unwound
@@ -146,7 +149,9 @@ impl VirtualTaskManager for WebTaskManager {
                 let _ = tx.send(());
             })
         }));
-        let _ = rx.await;
+        Box::pin(async move {
+            let _ = rx.await;
+        })
     }
 
     /// Starts an asynchronous task that will run on a shared worker pool

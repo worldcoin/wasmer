@@ -43,7 +43,6 @@ pub type WasmResumeTrigger = dyn FnOnce(Store) -> Pin<Box<dyn Future<Output = Ta
     + Sync;
 
 /// An implementation of task management
-#[async_trait::async_trait]
 #[allow(unused_variables)]
 pub trait VirtualTaskManager: std::fmt::Debug + Send + Sync + 'static {
     /// Build a new Webassembly memory.
@@ -58,7 +57,10 @@ pub trait VirtualTaskManager: std::fmt::Debug + Send + Sync + 'static {
     /// Invokes whenever a WASM thread goes idle. In some runtimes (like singlethreaded
     /// execution environments) they will need to do asynchronous work whenever the main
     /// thread goes idle and this is the place to hook for that.
-    async fn sleep_now(&self, time: Duration);
+    fn sleep_now(
+        &self,
+        time: Duration,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>;
 
     /// Starts an asynchronous task that will run on a shared worker pool
     /// This task must not block the execution or it could cause a deadlock

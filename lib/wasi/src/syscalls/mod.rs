@@ -418,7 +418,7 @@ where
         Fut: AsyncifyFuture + Send + Sync + 'static,
     {
         inner: Box<Fut>,
-        timeout: Option<Instant>,
+        timeout: Option<Pin<Box<dyn Future<Output = ()> + Send + Sync>>>,
     }
     impl<Fut> AsyncifyFuture for WorkWithTimeout<Fut>
     where
@@ -433,16 +433,9 @@ where
             if let Poll::Ready(res) = self.inner.poll(env, store, cx) {
                 return Poll::Ready(res);
             }
-
-            if let Some(end) = self.timeout.as_ref() {
-                let now = Instant::now();
-                if now >= *end {
-                    return Poll::Ready(Err(Errno::Timedout));
-                }
-                let diff = now - *end;
-
-                let mut timeout = env.tasks().sleep_now(diff);
+            if let Some(timeout) = self.timeout.as_mut() {
                 if timeout.as_mut().poll(cx).is_ready() {
+                    self.timeout.take();
                     return Poll::Ready(Err(Errno::Timedout));
                 }
             }
@@ -452,7 +445,7 @@ where
     }
     let mut work = WorkWithTimeout {
         inner: Box::new(work),
-        timeout: timeout.map(|timeout| Instant::now() + timeout),
+        timeout: timeout.map(|timeout| ctx.data().tasks().sleep_now(timeout)),
     };
 
     // Define the work
