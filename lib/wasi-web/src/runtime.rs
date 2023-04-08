@@ -207,10 +207,12 @@ impl VirtualTaskManager for WebTaskManager {
         task: Box<WasmResumeTask>,
         ctx: WasiFunctionEnv,
         store: Store,
+        module: Module,
+        memory: Memory,
         trigger: Box<WasmResumeTrigger>,
     ) -> Result<(), WasiThreadError> {
         self.pool
-            .spawn_wasm_after_trigger(task, ctx, store, trigger)?;
+            .spawn_wasm_after_trigger(task, ctx, store, module, memory, trigger)?;
         Ok(())
     }
 

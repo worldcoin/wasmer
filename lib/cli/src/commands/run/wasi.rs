@@ -7,7 +7,7 @@ use std::{
 };
 use virtual_fs::{DeviceFile, FileSystem, PassthruFileSystem, RootFileSystemBuilder};
 use wasmer::{
-    AsStoreMut, Function, Instance, Memory32, Memory64, Module, RuntimeError, Store, Value,
+    AsStoreMut, Function, Instance, Memory, Memory32, Memory64, Module, RuntimeError, Store, Value,
 };
 use wasmer_wasix::{
     default_fs_backing, get_wasi_versions,
@@ -259,8 +259,10 @@ impl Wasi {
 
         // We run it in a blocking thread as the WASM function may otherwise hold
         // up the IO operations
+        let module = run.ctx.data(&store).inner().module_clone();
+        let memory = run.ctx.data(&store).memory_clone();
         tasks.task_dedicated(Box::new(move || {
-            Self::run_with_deep_sleep(run, store, tx, None);
+            Self::run_with_deep_sleep(run, store, module, memory, tx, None);
         }))?;
         rx.recv()
             .expect("main thread terminated without a result, this normally means a panic occurred within the main thread")
@@ -270,6 +272,8 @@ impl Wasi {
     pub fn run_with_deep_sleep(
         run: RunProperties,
         mut store: Store,
+        module: Module,
+        memory: Memory,
         tx: Sender<Result<i32>>,
         rewind_state: Option<(RewindState, Result<(), Errno>)>,
     ) {
@@ -342,6 +346,8 @@ impl Wasi {
                     args: run.args,
                 },
                 store,
+                module,
+                memory,
                 result,
                 tx,
             )
@@ -352,6 +358,8 @@ impl Wasi {
     pub fn handle_result(
         run: RunProperties,
         mut store: Store,
+        module: Module,
+        memory: Memory,
         result: Result<Box<[Value]>, RuntimeError>,
         tx: Sender<Result<i32>>,
     ) {
@@ -374,7 +382,7 @@ impl Wasi {
                             let path = run.path;
                             let invoke = run.invoke;
                             let args = run.args;
-                            move |ctx, store, res| {
+                            move |ctx, store, module, memory, res| {
                                 let run = RunProperties {
                                     ctx,
                                     instance,
@@ -382,13 +390,27 @@ impl Wasi {
                                     invoke,
                                     args,
                                 };
-                                Self::run_with_deep_sleep(run, store, tx, Some((rewind, res)));
+                                Self::run_with_deep_sleep(
+                                    run,
+                                    store,
+                                    module,
+                                    memory,
+                                    tx,
+                                    Some((rewind, res)),
+                                );
                             }
                         };
 
                         // Spawns the WASM process after a trigger
                         tasks
-                            .resume_wasm_after_poller(Box::new(respawn), ctx, store, deep.work)
+                            .resume_wasm_after_poller(
+                                Box::new(respawn),
+                                ctx,
+                                store,
+                                module,
+                                memory,
+                                deep.work,
+                            )
                             .unwrap();
                         return;
                     }

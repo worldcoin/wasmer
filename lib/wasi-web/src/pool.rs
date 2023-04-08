@@ -344,12 +344,12 @@ impl WebThreadPool {
         task: Box<WasmResumeTask>,
         wasm_ctx: WasiFunctionEnv,
         wasm_store: Store,
+        wasm_module: Module,
+        wasm_memory: Memory,
         trigger: Box<WasmResumeTrigger>,
     ) -> Result<(), WasiThreadError> {
-        let env = wasm_ctx.data(&wasm_store);
-        let wasm_module = env.inner().module_clone();
-        let wasm_memory_ty = env.memory().ty(&wasm_store);
-        let wasm_memory = env.memory().as_jsvalue(&wasm_store);
+        let wasm_memory_ty = wasm_memory.ty(&wasm_store);
+        let wasm_memory = wasm_memory.as_jsvalue(&wasm_store);
 
         let task = Box::new(WasmTask::ResumeAfterTrigger(
             WasmResumeAfterTriggerCommand {
@@ -676,15 +676,23 @@ pub fn wasm_entry_point(ctx_ptr: u32, wasm_module: JsValue, wasm_memory: JsValue
         WasmRun::Run { task, .. } => {
             task(wasm_store, wasm_module, wasm_memory);
         }
-        WasmRun::Resume { task, ctx, result } => {
-            let _wasm_memory = match wasm_memory {
+        WasmRun::Resume {
+            task,
+            mut ctx,
+            result,
+        } => {
+            let wasm_memory = match wasm_memory {
                 Some(m) => m,
                 None => {
                     error!("no memory passed to resume_after_trigger");
                     return;
                 }
             };
-            task(ctx, wasm_store, result);
+
+            ctx.reinitialize(&mut wasm_store, &wasm_module, wasm_memory.clone())
+                .unwrap();
+
+            task(ctx, wasm_store, wasm_module, wasm_memory, result);
         }
     }
 }
@@ -806,13 +814,44 @@ fn worker_schedule_task_resume_after(
     opts.type_(WorkerType::Module);
     opts.name(&*format!("WasmWorker"));
 
-    let ctx = run.ctx;
-    let store = run.store;
+    let mut ctx = run.ctx;
+    let mut store = run.store;
     let task = run.task;
     let mem_ty = run.memory_ty;
     let module_bytes = run.module_bytes;
     let trigger = run.trigger;
-    let trigger = trigger(ctx, store);
+
+    // We run the process locally but before we can do that
+    // the memory and module needs to be correctly reattached
+    let trigger = {
+        // Compile the web assembly module and convert the memory
+        let wasm_module = match wasm_module
+            .clone()
+            .dyn_into::<js_sys::WebAssembly::Module>()
+        {
+            Ok(a) => a,
+            Err(err) => {
+                error!(
+                    "Failed to receive module - {}",
+                    err.as_string().unwrap_or_else(|| format!("{:?}", err))
+                );
+                return;
+            }
+        };
+        let wasm_module: Module = (wasm_module, module_bytes.clone()).into();
+        let wasm_memory = match Memory::from_jsvalue(&mut store, &mem_ty, &wasm_memory) {
+            Ok(a) => a,
+            Err(_) => return,
+        };
+
+        // Rebuild the context again now that we are in the main
+        // thread so that the memory and module can be passed around
+        ctx.reinitialize(&mut store, &wasm_module, wasm_memory)
+            .unwrap();
+
+        // Now we run the asynchronous trigger
+        trigger(ctx, store)
+    };
 
     wasm_bindgen_futures::spawn_local(async move {
         // We run the asynchronous task on the main javascript async engine
