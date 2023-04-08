@@ -132,7 +132,7 @@ pub fn proc_fork<M: MemorySize>(
                 return OnCalledAction::Trap(Box::new(WasiError::Exit(Errno::Memviolation.into())));
             }
         };
-        let fork_module = env.inner().instance.module().clone();
+        let fork_module = env.inner().module_clone();
 
         // Now we use the environment and memory references
         let runtime = child_env.runtime.clone();
@@ -317,10 +317,9 @@ fn run<M: MemorySize>(
 
                 // Create the respawn function
                 let respawn = {
-                    let ctx = ctx.clone();
                     let tasks = tasks.clone();
                     let rewind_state = deep.rewind;
-                    move |store, trigger_res| {
+                    move |ctx, store, trigger_res| {
                         run::<M>(
                             ctx,
                             store,
@@ -332,7 +331,7 @@ fn run<M: MemorySize>(
                 };
 
                 /// Spawns the WASM process after a trigger
-                tasks.resume_wasm_after_poller(Box::new(respawn), store, ctx, deep.work);
+                tasks.resume_wasm_after_poller(Box::new(respawn), ctx, store, deep.work);
                 return Errno::Success.into();
             }
             _ => {}

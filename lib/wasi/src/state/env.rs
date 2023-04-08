@@ -185,6 +185,14 @@ impl WasiInstanceHandles {
             instance,
         }
     }
+
+    pub fn module(&self) -> &Module {
+        self.instance.module()
+    }
+
+    pub fn module_clone(&self) -> Module {
+        self.instance.module().clone()
+    }
 }
 
 /// The code itself makes safe use of the struct so multiple threads don't access

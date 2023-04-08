@@ -131,7 +131,7 @@ pub fn thread_spawn<M: MemorySize>(
 
     // Now spawn a thread
     trace!("threading: spawning background thread");
-    let thread_module = env.inner().instance.module().clone();
+    let thread_module = env.inner().module_clone();
     let task = move |store, thread_module, thread_memory| {
         execute_module(store, thread_module, thread_memory);
     };
@@ -231,12 +231,11 @@ fn call_module<M: MemorySize>(
             // Create the callback that will be invoked when the thread respawns after a deep sleep
             let rewind = deep.rewind;
             let respawn = {
-                let env = ctx.clone();
                 let tasks = tasks.clone();
-                move |store, trigger_res| {
+                move |ctx, store, trigger_res| {
                     // Call the thread
                     call_module::<M>(
-                        env,
+                        ctx,
                         store,
                         tasks,
                         start_ptr_offset,
@@ -247,7 +246,7 @@ fn call_module<M: MemorySize>(
             };
 
             /// Spawns the WASM process after a trigger
-            tasks.resume_wasm_after_poller(Box::new(respawn), store, ctx, deep.work);
+            tasks.resume_wasm_after_poller(Box::new(respawn), ctx, store, deep.work);
             Errno::Unknown as u32
         }
     }

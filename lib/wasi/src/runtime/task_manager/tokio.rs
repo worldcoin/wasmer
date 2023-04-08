@@ -8,7 +8,7 @@ use futures::Future;
 use tokio::runtime::Handle;
 use wasmer::{AsStoreMut, Memory, Module, Store, StoreMut};
 
-use crate::os::task::thread::WasiThreadError;
+use crate::{os::task::thread::WasiThreadError, WasiFunctionEnv};
 
 use super::{SpawnType, TaskResumeAction, VirtualTaskManager, WasmResumeTask, WasmResumeTrigger};
 
@@ -155,19 +155,18 @@ impl VirtualTaskManager for TokioTaskManager {
     fn resume_wasm_after_trigger(
         &self,
         task: Box<WasmResumeTask>,
+        ctx: WasiFunctionEnv,
         store: Store,
-        _module: Module,
-        _memory: Memory,
         trigger: Box<WasmResumeTrigger>,
     ) -> Result<(), WasiThreadError> {
-        let trigger = trigger(store);
+        let trigger = trigger(ctx, store);
         let handle = self.0.clone();
         self.0.spawn(async move {
             let action = trigger.await;
-            if let TaskResumeAction::Run(store, res) = action {
+            if let TaskResumeAction::Run(ctx, store, res) = action {
                 handle.spawn_blocking(move || {
                     // Invoke the callback
-                    task(store, res);
+                    task(ctx, store, res);
                 });
             }
         });

@@ -24,7 +24,8 @@ use wasmer_wasix::{
         SpawnType,
     },
     wasmer::{Memory, Module, Store, StoreMut},
-    VirtualFile, VirtualNetworking, VirtualTaskManager, WasiRuntime, WasiThreadError, WasiTtyState,
+    VirtualFile, VirtualNetworking, VirtualTaskManager, WasiFunctionEnv, WasiRuntime,
+    WasiThreadError, WasiTtyState,
 };
 use web_sys::WebGl2RenderingContext;
 
@@ -204,13 +205,12 @@ impl VirtualTaskManager for WebTaskManager {
     fn resume_wasm_after_trigger(
         &self,
         task: Box<WasmResumeTask>,
+        ctx: WasiFunctionEnv,
         store: Store,
-        module: Module,
-        memory: Memory,
         trigger: Box<WasmResumeTrigger>,
     ) -> Result<(), WasiThreadError> {
         self.pool
-            .spawn_wasm_after_trigger(task, store, module, memory, trigger)?;
+            .spawn_wasm_after_trigger(task, ctx, store, trigger)?;
         Ok(())
     }
 

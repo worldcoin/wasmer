@@ -31,14 +31,17 @@ pub enum SpawnType {
 /// or if it should abort and exit the thread
 pub enum TaskResumeAction {
     // The task will run with the following store
-    Run(Store, Result<(), Errno>),
+    Run(WasiFunctionEnv, Store, Result<(), Errno>),
     /// The task has been aborted
     Abort,
 }
 
-pub type WasmResumeTask = dyn FnOnce(Store, Result<(), Errno>) + Send + 'static;
+pub type WasmResumeTask = dyn FnOnce(WasiFunctionEnv, Store, Result<(), Errno>) + Send + 'static;
 
-pub type WasmResumeTrigger = dyn FnOnce(Store) -> Pin<Box<dyn Future<Output = TaskResumeAction> + Send + 'static>>
+pub type WasmResumeTrigger = dyn FnOnce(
+        WasiFunctionEnv,
+        Store,
+    ) -> Pin<Box<dyn Future<Output = TaskResumeAction> + Send + 'static>>
     + Send
     + Sync;
 
@@ -94,9 +97,8 @@ pub trait VirtualTaskManager: std::fmt::Debug + Send + Sync + 'static {
     fn resume_wasm_after_trigger(
         &self,
         task: Box<WasmResumeTask>,
+        ctx: WasiFunctionEnv,
         store: Store,
-        module: Module,
-        memory: Memory,
         trigger: Box<WasmResumeTrigger>,
     ) -> Result<(), WasiThreadError>;
 
@@ -126,17 +128,13 @@ impl dyn VirtualTaskManager {
     pub fn resume_wasm_after_poller(
         &self,
         task: Box<WasmResumeTask>,
+        ctx: WasiFunctionEnv,
         store: Store,
-        env: WasiFunctionEnv,
         work: Box<dyn AsyncifyFuture + Send + Sync + 'static>,
     ) -> Result<(), WasiThreadError> {
-        // Extract the module and memory
-        let module = env.data(&store).inner().instance.module().clone();
-        let memory = env.data(&store).memory_clone();
-
         // This poller will process any signals when the main working function is idle
         struct AsyncifyPollerOwned {
-            env: WasiFunctionEnv,
+            ctx: WasiFunctionEnv,
             store: Store,
             work: RefCell<Box<dyn AsyncifyFuture + Send + Sync + 'static>>,
         }
@@ -145,7 +143,7 @@ impl dyn VirtualTaskManager {
             fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
                 let mut work = self.work.borrow_mut();
                 let store = &self.store;
-                let env = self.env.data(store);
+                let env = self.ctx.data(store);
 
                 Poll::Ready(if let Poll::Ready(res) = work.poll(env, &self.store, cx) {
                     Ok(res)
@@ -161,13 +159,12 @@ impl dyn VirtualTaskManager {
 
         self.resume_wasm_after_trigger(
             task,
+            ctx,
             store,
-            module,
-            memory,
-            Box::new(move |store| {
+            Box::new(move |ctx, store| {
                 Box::pin(async move {
                     let mut poller = AsyncifyPollerOwned {
-                        env,
+                        ctx,
                         store,
                         work: RefCell::new(work),
                     };
@@ -175,13 +172,13 @@ impl dyn VirtualTaskManager {
                     let res = match res {
                         Ok(res) => res,
                         Err(exit_code) => {
-                            let env = poller.env.data(&poller.store);
+                            let env = poller.ctx.data(&poller.store);
                             env.thread.set_status_finished(Ok(exit_code));
                             return TaskResumeAction::Abort;
                         }
                     };
                     tracing::trace!("deep sleep woken - {:?}", res);
-                    TaskResumeAction::Run(poller.store, res)
+                    TaskResumeAction::Run(poller.ctx, poller.store, res)
                 })
             }),
         )

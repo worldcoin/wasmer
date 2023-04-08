@@ -34,7 +34,7 @@ use wasmer_wasix::{
     },
     wasmer::{AsJs, Memory, MemoryType, Module, Store, WASM_MAX_PAGES},
     wasmer_wasix_types::wasi::Errno,
-    VirtualTaskManager, WasiThreadError,
+    VirtualTaskManager, WasiFunctionEnv, WasiThreadError,
 };
 use web_sys::{DedicatedWorkerGlobalScope, WorkerOptions, WorkerType};
 use xterm_js_rs::Terminal;
@@ -69,6 +69,8 @@ struct WasmRunCommand {
 struct WasmResumeAfterTriggerCommand {
     #[derivative(Debug = "ignore")]
     task: Box<WasmResumeTask>,
+    #[derivative(Debug = "ignore")]
+    ctx: WasiFunctionEnv,
     store: Store,
     module_bytes: Bytes,
     memory_ty: MemoryType,
@@ -93,6 +95,7 @@ enum WasmRun {
     },
     Resume {
         task: Box<WasmResumeTask>,
+        ctx: WasiFunctionEnv,
         result: Result<(), Errno>,
     },
 }
@@ -339,17 +342,19 @@ impl WebThreadPool {
     pub fn spawn_wasm_after_trigger(
         &self,
         task: Box<WasmResumeTask>,
+        wasm_ctx: WasiFunctionEnv,
         wasm_store: Store,
-        wasm_module: Module,
-        wasm_memory: Memory,
         trigger: Box<WasmResumeTrigger>,
     ) -> Result<(), WasiThreadError> {
-        let wasm_memory_ty = wasm_memory.ty(&wasm_store);
-        let wasm_memory = wasm_memory.as_jsvalue(&wasm_store);
+        let env = wasm_ctx.data(&wasm_store);
+        let wasm_module = env.inner().module_clone();
+        let wasm_memory_ty = env.memory().ty(&wasm_store);
+        let wasm_memory = env.memory().as_jsvalue(&wasm_store);
 
         let task = Box::new(WasmTask::ResumeAfterTrigger(
             WasmResumeAfterTriggerCommand {
                 task,
+                ctx: wasm_ctx,
                 store: wasm_store,
                 module_bytes: wasm_module.serialize().unwrap(),
                 memory_ty: wasm_memory_ty,
@@ -671,7 +676,7 @@ pub fn wasm_entry_point(ctx_ptr: u32, wasm_module: JsValue, wasm_memory: JsValue
         WasmRun::Run { task, .. } => {
             task(wasm_store, wasm_module, wasm_memory);
         }
-        WasmRun::Resume { task, result } => {
+        WasmRun::Resume { task, ctx, result } => {
             let _wasm_memory = match wasm_memory {
                 Some(m) => m,
                 None => {
@@ -679,7 +684,7 @@ pub fn wasm_entry_point(ctx_ptr: u32, wasm_module: JsValue, wasm_memory: JsValue
                     return;
                 }
             };
-            task(wasm_store, result);
+            task(ctx, wasm_store, result);
         }
     }
 }
@@ -801,12 +806,13 @@ fn worker_schedule_task_resume_after(
     opts.type_(WorkerType::Module);
     opts.name(&*format!("WasmWorker"));
 
+    let ctx = run.ctx;
     let store = run.store;
     let task = run.task;
     let mem_ty = run.memory_ty;
     let module_bytes = run.module_bytes;
     let trigger = run.trigger;
-    let trigger = trigger(store);
+    let trigger = trigger(ctx, store);
 
     wasm_bindgen_futures::spawn_local(async move {
         // We run the asynchronous task on the main javascript async engine
@@ -820,9 +826,13 @@ fn worker_schedule_task_resume_after(
             TaskResumeAction::Abort => {
                 return;
             }
-            TaskResumeAction::Run(store, result) => {
+            TaskResumeAction::Run(wasm_ctx, store, result) => {
                 let ctx = WasmRunContext {
-                    run: WasmRun::Resume { task: task, result },
+                    run: WasmRun::Resume {
+                        ctx: wasm_ctx,
+                        task: task,
+                        result,
+                    },
                     store: store,
                     module_bytes,
                     memory: WasmRunMemory::WithMemory(mem_ty),

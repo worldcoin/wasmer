@@ -251,8 +251,7 @@ fn call_module(
                     // Create the callback that will be invoked when the thread respawns after a deep sleep
                     let rewind = deep.rewind;
                     let respawn = {
-                        let ctx = ctx.clone();
-                        move |store, trigger_res| {
+                        move |ctx, store, trigger_res| {
                             // Call the thread
                             call_module(ctx, store, start, Some((rewind, trigger_res)));
                         }
@@ -260,7 +259,7 @@ fn call_module(
 
                     // Spawns the WASM process after a trigger
                     if let Err(err) =
-                        tasks.resume_wasm_after_poller(Box::new(respawn), store, ctx, deep.work)
+                        tasks.resume_wasm_after_poller(Box::new(respawn), ctx, store, deep.work)
                     {
                         debug!("failed to go into deep sleep - {}", err);
                     }

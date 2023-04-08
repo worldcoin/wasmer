@@ -370,21 +370,25 @@ impl Wasi {
                         let tasks = ctx.data(&store).tasks().clone();
                         let rewind = deep.rewind;
                         let respawn = {
-                            let run = RunProperties {
-                                ctx: ctx.clone(),
-                                instance: run.instance,
-                                path: run.path,
-                                invoke: run.invoke,
-                                args: run.args,
-                            };
-                            move |store, res| {
+                            let instance = run.instance;
+                            let path = run.path;
+                            let invoke = run.invoke;
+                            let args = run.args;
+                            move |ctx, store, res| {
+                                let run = RunProperties {
+                                    ctx,
+                                    instance,
+                                    path,
+                                    invoke,
+                                    args,
+                                };
                                 Self::run_with_deep_sleep(run, store, tx, Some((rewind, res)));
                             }
                         };
 
                         // Spawns the WASM process after a trigger
                         tasks
-                            .resume_wasm_after_poller(Box::new(respawn), store, ctx, deep.work)
+                            .resume_wasm_after_poller(Box::new(respawn), ctx, store, deep.work)
                             .unwrap();
                         return;
                     }
