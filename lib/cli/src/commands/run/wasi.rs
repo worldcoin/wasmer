@@ -378,7 +378,7 @@ impl Wasi {
                                 invoke: run.invoke,
                                 args: run.args,
                             };
-                            move |store, _module, res| {
+                            move |store, _module, _memory, res| {
                                 Self::run_with_deep_sleep(run, store, tx, Some((rewind, res)));
                             }
                         };

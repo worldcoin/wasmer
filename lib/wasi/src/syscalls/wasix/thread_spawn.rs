@@ -112,10 +112,12 @@ pub fn thread_spawn<M: MemorySize>(
             };
 
             // Call the thread
+            let memory = ctx.data(&store).memory_clone();
             call_module::<M>(
                 ctx,
                 store,
                 module,
+                memory,
                 tasks,
                 start_ptr_offset,
                 thread_handle,
@@ -155,6 +157,7 @@ fn call_module<M: MemorySize>(
     ctx: WasiFunctionEnv,
     mut store: Store,
     module: Module,
+    _memory: Memory,
     tasks: Arc<dyn VirtualTaskManager>,
     start_ptr_offset: M::Offset,
     thread_handle: Arc<WasiThreadHandle>,
@@ -241,12 +244,13 @@ fn call_module<M: MemorySize>(
             let respawn = {
                 let env = ctx.clone();
                 let tasks = tasks.clone();
-                move |store, module, trigger_res| {
+                move |store, module, memory, trigger_res| {
                     // Call the thread
                     call_module::<M>(
                         env,
                         store,
                         module,
+                        memory,
                         tasks,
                         start_ptr_offset,
                         thread_handle,

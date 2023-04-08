@@ -36,7 +36,7 @@ pub enum TaskResumeAction {
     Abort,
 }
 
-pub type WasmResumeTask = dyn FnOnce(Store, Module, Result<(), Errno>) + Send + 'static;
+pub type WasmResumeTask = dyn FnOnce(Store, Module, Memory, Result<(), Errno>) + Send + 'static;
 
 pub type WasmResumeTrigger = dyn FnOnce(Store) -> Pin<Box<dyn Future<Output = TaskResumeAction> + Send + 'static>>
     + Send
@@ -94,6 +94,7 @@ pub trait VirtualTaskManager: std::fmt::Debug + Send + Sync + 'static {
         task: Box<WasmResumeTask>,
         store: Store,
         module: Module,
+        memory: Memory,
         trigger: Box<WasmResumeTrigger>,
     ) -> Result<(), WasiThreadError>;
 
@@ -128,6 +129,9 @@ impl dyn VirtualTaskManager {
         env: WasiFunctionEnv,
         work: Box<dyn AsyncifyFuture + Send + Sync + 'static>,
     ) -> Result<(), WasiThreadError> {
+        // Extract the memory
+        let memory = env.data(&store).memory_clone();
+
         // This poller will process any signals when the main working function is idle
         struct AsyncifyPollerOwned {
             env: WasiFunctionEnv,
@@ -157,6 +161,7 @@ impl dyn VirtualTaskManager {
             task,
             store,
             module,
+            memory,
             Box::new(move |store| {
                 Box::pin(async move {
                     let mut poller = AsyncifyPollerOwned {

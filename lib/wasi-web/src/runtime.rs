@@ -19,8 +19,11 @@ use wasm_bindgen_futures::JsFuture;
 use wasmer_wasix::{
     http::{DynHttpClient, HttpRequest, HttpResponse},
     os::{TtyBridge, TtyOptions},
-    runtime::SpawnType,
-    wasmer::{Memory, MemoryType, Module, Store, StoreMut},
+    runtime::{
+        task_manager::{WasmResumeTask, WasmResumeTrigger},
+        SpawnType,
+    },
+    wasmer::{Memory, Module, Store, StoreMut},
     VirtualFile, VirtualNetworking, VirtualTaskManager, WasiRuntime, WasiThreadError, WasiTtyState,
 };
 use web_sys::WebGl2RenderingContext;
@@ -187,6 +190,22 @@ impl VirtualTaskManager for WebTaskManager {
         spawn_type: SpawnType,
     ) -> Result<(), WasiThreadError> {
         self.pool.spawn_wasm(task, store, module, spawn_type)?;
+        Ok(())
+    }
+
+    /// Starts an WebAssembly task will will run on a dedicated thread
+    /// pulled from the worker pool that has a stateful thread local variable
+    /// After the trigger has successfully completed
+    fn resume_wasm_after_trigger(
+        &self,
+        task: Box<WasmResumeTask>,
+        store: Store,
+        module: Module,
+        memory: Memory,
+        trigger: Box<WasmResumeTrigger>,
+    ) -> Result<(), WasiThreadError> {
+        self.pool
+            .spawn_wasm_after_trigger(task, store, module, memory, trigger)?;
         Ok(())
     }
 

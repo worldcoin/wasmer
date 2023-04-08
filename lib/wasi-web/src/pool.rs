@@ -28,8 +28,12 @@ use tracing::{debug, error, info, trace, warn};
 use wasm_bindgen::{prelude::*, JsCast};
 use wasm_bindgen_futures::JsFuture;
 use wasmer_wasix::{
-    runtime::SpawnType,
+    runtime::{
+        task_manager::{TaskResumeAction, WasmResumeTask, WasmResumeTrigger},
+        SpawnType,
+    },
     wasmer::{AsJs, Memory, MemoryType, Module, Store, WASM_MAX_PAGES},
+    wasmer_wasix_types::wasi::Errno,
     VirtualTaskManager, WasiThreadError,
 };
 use web_sys::{DedicatedWorkerGlobalScope, WorkerOptions, WorkerType};
@@ -60,13 +64,43 @@ struct WasmRunCommand {
     module_bytes: Bytes,
 }
 
+#[derive(Derivative)]
+#[derivative(Debug)]
+struct WasmResumeAfterTriggerCommand {
+    #[derivative(Debug = "ignore")]
+    task: Box<WasmResumeTask>,
+    store: Store,
+    module_bytes: Bytes,
+    memory_ty: MemoryType,
+    #[derivative(Debug = "ignore")]
+    trigger: Box<WasmResumeTrigger>,
+}
+
+#[derive(Debug)]
+enum WasmTask {
+    Run(WasmRunCommand),
+    ResumeAfterTrigger(WasmResumeAfterTriggerCommand),
+}
+
 enum WasmRunMemory {
     WithoutMemory,
     WithMemory(MemoryType),
 }
 
+enum WasmRun {
+    Run {
+        task: Box<dyn FnOnce(Store, Module, Option<Memory>) + Send + 'static>,
+    },
+    Resume {
+        task: Box<WasmResumeTask>,
+        result: Result<(), Errno>,
+    },
+}
+
 struct WasmRunContext {
-    cmd: WasmRunCommand,
+    run: WasmRun,
+    store: Store,
+    module_bytes: Bytes,
     memory: WasmRunMemory,
 }
 
@@ -284,14 +318,44 @@ impl WebThreadPool {
             }
         };
 
-        let task = Box::new(WasmRunCommand {
+        let task = Box::new(WasmTask::Run(WasmRunCommand {
             run: Box::new(move |store, module, memory| {
                 run(store, module, memory);
             }),
             ty: run_type,
             store: wasm_store,
             module_bytes: wasm_module.serialize().unwrap(),
-        });
+        }));
+        let task = Box::into_raw(task);
+
+        schedule_task(
+            JsValue::from(task as u32),
+            JsValue::from(wasm_module),
+            wasm_memory,
+        );
+        Ok(())
+    }
+
+    pub fn spawn_wasm_after_trigger(
+        &self,
+        task: Box<WasmResumeTask>,
+        wasm_store: Store,
+        wasm_module: Module,
+        wasm_memory: Memory,
+        trigger: Box<WasmResumeTrigger>,
+    ) -> Result<(), WasiThreadError> {
+        let wasm_memory_ty = wasm_memory.ty(&wasm_store);
+        let wasm_memory = wasm_memory.as_jsvalue(&wasm_store);
+
+        let task = Box::new(WasmTask::ResumeAfterTrigger(
+            WasmResumeAfterTriggerCommand {
+                task,
+                store: wasm_store,
+                module_bytes: wasm_module.serialize().unwrap(),
+                memory_ty: wasm_memory_ty,
+                trigger,
+            },
+        ));
         let task = Box::into_raw(task);
 
         schedule_task(
@@ -562,10 +626,9 @@ pub fn wasm_entry_point(ctx_ptr: u32, wasm_module: JsValue, wasm_memory: JsValue
     // Grab the run wrapper that passes us the rust variables (and extract the callback)
     let ctx = ctx_ptr as *mut WasmRunContext;
     let ctx = unsafe { Box::from_raw(ctx) };
-    let run_callback = (*ctx).cmd.run;
+    let run_callback = (*ctx).run;
 
     // Compile the web assembly module
-    let mut wasm_store = ctx.cmd.store;
     let wasm_module = match wasm_module.dyn_into::<js_sys::WebAssembly::Module>() {
         Ok(a) => a,
         Err(err) => {
@@ -576,16 +639,16 @@ pub fn wasm_entry_point(ctx_ptr: u32, wasm_module: JsValue, wasm_memory: JsValue
             return;
         }
     };
-    let wasm_module: Module = (wasm_module, ctx.cmd.module_bytes.clone()).into();
 
     // If memory was passed to the web worker then construct it
+    let mut wasm_store = ctx.store;
     let wasm_memory = match ctx.memory {
         WasmRunMemory::WithoutMemory => None,
         WasmRunMemory::WithMemory(wasm_memory_type) => {
             let wasm_memory =
                 match Memory::from_jsvalue(&mut wasm_store, &wasm_memory_type, &wasm_memory) {
                     Ok(a) => a,
-                    Err(err) => {
+                    Err(_) => {
                         // error!(
                         //     "Failed to receive memory for module - {}",
                         //     err.as_string().unwrap_or_else(|| format!("{:?}", err))
@@ -596,6 +659,7 @@ pub fn wasm_entry_point(ctx_ptr: u32, wasm_module: JsValue, wasm_memory: JsValue
             Some(wasm_memory)
         }
     };
+    let wasm_module: Module = (wasm_module, ctx.module_bytes.clone()).into();
 
     let name = js_sys::global()
         .unchecked_into::<DedicatedWorkerGlobalScope>()
@@ -603,24 +667,53 @@ pub fn wasm_entry_point(ctx_ptr: u32, wasm_module: JsValue, wasm_memory: JsValue
     debug!("{}: Entry", name);
 
     // Invoke the callback which will run the web assembly module
-    run_callback(wasm_store, wasm_module, wasm_memory);
+    match run_callback {
+        WasmRun::Run { task, .. } => {
+            task(wasm_store, wasm_module, wasm_memory);
+        }
+        WasmRun::Resume { task, result } => {
+            let wasm_memory = match wasm_memory {
+                Some(m) => m,
+                None => {
+                    error!("no memory passed to resume_after_trigger");
+                    return;
+                }
+            };
+            task(wasm_store, wasm_module, wasm_memory, result);
+        }
+    }
 }
 
 #[wasm_bindgen()]
-pub fn worker_schedule_task(task_ptr: u32, wasm_module: JsValue, mut wasm_memory: JsValue) {
+pub fn worker_schedule_task(task_ptr: u32, wasm_module: JsValue, wasm_memory: JsValue) {
     // Grab the task that passes us the rust variables
-    let task = task_ptr as *mut WasmRunCommand;
-    let mut task = unsafe { Box::from_raw(task) };
+    let task = task_ptr as *mut WasmTask;
+    let task = unsafe { Box::from_raw(task) };
 
+    match *task {
+        WasmTask::Run(run) => worker_schedule_task_run(run, wasm_module, wasm_memory),
+        WasmTask::ResumeAfterTrigger(resume_after) => {
+            worker_schedule_task_resume_after(resume_after, wasm_module, wasm_memory)
+        }
+    }
+}
+
+fn worker_schedule_task_run(
+    mut run: WasmRunCommand,
+    wasm_module: JsValue,
+    mut wasm_memory: JsValue,
+) {
     let mut opts = WorkerOptions::new();
     opts.type_(WorkerType::Module);
     opts.name(&*format!("WasmWorker"));
 
-    let result = match task.ty.clone() {
+    let result = match run.ty.clone() {
         WasmRunType::Create => {
             let ctx = WasmRunContext {
-                cmd: *task,
+                run: WasmRun::Run { task: run.run },
                 memory: WasmRunMemory::WithoutMemory,
+                store: run.store,
+                module_bytes: run.module_bytes,
             };
             let ctx = Box::into_raw(Box::new(ctx));
 
@@ -647,19 +740,21 @@ pub fn worker_schedule_task(task_ptr: u32, wasm_module: JsValue, mut wasm_memory
             }
 
             if wasm_memory.is_null() {
-                let memory = match Memory::new(&mut task.store, ty.clone()) {
+                let memory = match Memory::new(&mut run.store, ty.clone()) {
                     Ok(a) => a,
                     Err(err) => {
                         error!("Failed to create WASM memory - {}", err);
                         return;
                     }
                 };
-                wasm_memory = memory.as_jsvalue(&task.store);
+                wasm_memory = memory.as_jsvalue(&run.store);
             }
 
             let ctx = WasmRunContext {
-                cmd: *task,
+                run: WasmRun::Run { task: run.run },
                 memory: WasmRunMemory::WithMemory(ty),
+                store: run.store,
+                module_bytes: run.module_bytes,
             };
             let ctx = Box::into_raw(Box::new(ctx));
 
@@ -675,7 +770,9 @@ pub fn worker_schedule_task(task_ptr: u32, wasm_module: JsValue, mut wasm_memory
         }
         WasmRunType::Existing(wasm_memory_type) => {
             let ctx = WasmRunContext {
-                cmd: *task,
+                run: WasmRun::Run { task: run.run },
+                store: run.store,
+                module_bytes: run.module_bytes,
                 memory: WasmRunMemory::WithMemory(wasm_memory_type),
             };
             let ctx = Box::into_raw(Box::new(ctx));
@@ -693,4 +790,56 @@ pub fn worker_schedule_task(task_ptr: u32, wasm_module: JsValue, mut wasm_memory
     };
 
     wasm_bindgen_futures::spawn_local(async move { _process_worker_result(result, None).await });
+}
+
+fn worker_schedule_task_resume_after(
+    run: WasmResumeAfterTriggerCommand,
+    wasm_module: JsValue,
+    wasm_memory: JsValue,
+) {
+    let mut opts = WorkerOptions::new();
+    opts.type_(WorkerType::Module);
+    opts.name(&*format!("WasmWorker"));
+
+    let store = run.store;
+    let task = run.task;
+    let mem_ty = run.memory_ty;
+    let module_bytes = run.module_bytes;
+    let trigger = run.trigger;
+    let trigger = trigger(store);
+
+    wasm_bindgen_futures::spawn_local(async move {
+        // We run the asynchronous task on the main javascript async engine
+        // which will then perform some action as a result
+        let action = trigger.await;
+
+        // If the process is to resume then we need to move the task onto
+        // a new dedicated thread and resume it there using the supplied
+        // callback function
+        match action {
+            TaskResumeAction::Abort => {
+                return;
+            }
+            TaskResumeAction::Run(store, result) => {
+                let ctx = WasmRunContext {
+                    run: WasmRun::Resume { task: task, result },
+                    store: store,
+                    module_bytes,
+                    memory: WasmRunMemory::WithMemory(mem_ty),
+                };
+                let ctx = Box::into_raw(Box::new(ctx));
+
+                let result = wasm_bindgen_futures::JsFuture::from(start_wasm(
+                    wasm_bindgen::module(),
+                    wasm_bindgen::memory(),
+                    JsValue::from(ctx as u32),
+                    opts,
+                    LoaderHelper {},
+                    wasm_module,
+                    wasm_memory,
+                ));
+                _process_worker_result(result, None).await
+            }
+        }
+    });
 }

@@ -7,11 +7,10 @@ use std::{
 use futures::Future;
 use tokio::runtime::Handle;
 use wasmer::{AsStoreMut, Memory, Module, Store, StoreMut};
-use wasmer_wasix_types::wasi::Errno;
 
 use crate::os::task::thread::WasiThreadError;
 
-use super::{SpawnType, TaskResumeAction, VirtualTaskManager, WasmResumeTrigger};
+use super::{SpawnType, TaskResumeAction, VirtualTaskManager, WasmResumeTask, WasmResumeTrigger};
 
 /// A task manager that uses tokio to spawn tasks.
 #[derive(Clone, Debug)]
@@ -154,9 +153,10 @@ impl VirtualTaskManager for TokioTaskManager {
     /// See [`VirtualTaskManager::task_wasm_with_trigger`].
     fn resume_wasm_after_trigger(
         &self,
-        task: Box<dyn FnOnce(Store, Module, Result<(), Errno>) + Send + 'static>,
+        task: Box<WasmResumeTask>,
         store: Store,
         module: Module,
+        memory: Memory,
         trigger: Box<WasmResumeTrigger>,
     ) -> Result<(), WasiThreadError> {
         let trigger = trigger(store);
@@ -166,7 +166,7 @@ impl VirtualTaskManager for TokioTaskManager {
             if let TaskResumeAction::Run(store, res) = action {
                 handle.spawn_blocking(move || {
                     // Invoke the callback
-                    task(store, module, res);
+                    task(store, module, memory, res);
                 });
             }
         });

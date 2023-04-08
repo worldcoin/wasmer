@@ -183,7 +183,7 @@ pub fn proc_fork<M: MemorySize>(
 
                 // Set the current thread ID
                 ctx.data_mut(&mut store).inner =
-                    Some(WasiInstanceHandles::new(memory, &store, instance));
+                    Some(WasiInstanceHandles::new(memory.clone(), &store, instance));
 
                 // Rewind the stack and carry on
                 {
@@ -208,7 +208,7 @@ pub fn proc_fork<M: MemorySize>(
                 }
 
                 // Invoke the start function
-                run::<M>(ctx, store, module, tasks, child_handle, None);
+                run::<M>(ctx, store, module, memory, tasks, child_handle, None);
             };
 
             tasks_outer
@@ -273,6 +273,7 @@ fn run<M: MemorySize>(
     ctx: WasiFunctionEnv,
     mut store: Store,
     module: Module,
+    _memory: Memory,
     tasks: Arc<dyn VirtualTaskManager>,
     child_handle: WasiThreadHandle,
     rewind_state: Option<(RewindState, Result<(), Errno>)>,
@@ -321,11 +322,12 @@ fn run<M: MemorySize>(
                     let ctx = ctx.clone();
                     let tasks = tasks.clone();
                     let rewind_state = deep.rewind;
-                    move |store, module, trigger_res| {
+                    move |store, module, memory, trigger_res| {
                         run::<M>(
                             ctx,
                             store,
                             module,
+                            memory,
                             tasks,
                             child_handle,
                             Some((rewind_state, trigger_res)),
